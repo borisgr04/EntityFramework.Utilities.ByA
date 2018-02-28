@@ -18,6 +18,7 @@ namespace Tests
                 if(connectionsStrings == null){
                     using(var stream = File.OpenRead("connectionStrings.json")){
                         connectionsStrings = JsonSerializer.DeserializeFromStream<ConnectionStrings>(stream);
+                        //connectionsStrings.SqlServer=connectionsStrings.SqlServer.Replace("SqlExpress", @".\SqlExpress");
                     }
                 }
                 return connectionsStrings;

@@ -6,6 +6,7 @@ using Tests.FakeDomain;
 using Tests.FakeDomain.Models;
 using Tests.Models;
 using System;
+using System.Data.SqlClient;
 
 namespace Tests
 {
@@ -21,10 +22,48 @@ namespace Tests
             {
                 var posts = db.BlogPosts.ToList();
                 foreach (var post in posts)
-	            {
+                {
                     post.Title = post.Title.Replace("1", "4").Replace("2", "8").Replace("3", "12");
-	            }
+                }
                 EFBatchOperation.For(db, db.BlogPosts).UpdateAll(posts, spec => spec.ColumnsToUpdate(p => p.Title));
+            }
+
+            using (var db = Context.Sql())
+            {
+                var posts = db.BlogPosts.OrderBy(b => b.ID).ToList();
+                Assert.AreEqual("T4", posts[0].Title);
+                Assert.AreEqual("T8", posts[1].Title);
+                Assert.AreEqual("T12", posts[2].Title);
+            }
+        }
+
+        [TestMethod]
+        public void UpdateBulk_UpdatesAllTransaction()
+        {
+            //Setup();
+
+            using (var db = Context.Sql())
+            {
+                using (var dbContextTransaction = db.Database.BeginTransaction())
+                {
+                    try
+                    {
+                        var _sqlTransaction = (SqlTransaction)dbContextTransaction.UnderlyingTransaction;
+                        var posts = db.BlogPosts.ToList();
+                        foreach (var post in posts)
+                        {
+                            post.Title = post.Title.Replace("1", "4").Replace("2", "8").Replace("3", "12");
+                        }
+                        EFBatchOperation.For(db, db.BlogPosts, _sqlTransaction).UpdateAll(posts, spec => spec.ColumnsToUpdate(p => p.Title));
+                        dbContextTransaction.Commit();
+                        Console.WriteLine("Commit OK");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(ex.Message);
+                        dbContextTransaction.Rollback();
+                    }
+                }
             }
 
             using (var db = Context.Sql())

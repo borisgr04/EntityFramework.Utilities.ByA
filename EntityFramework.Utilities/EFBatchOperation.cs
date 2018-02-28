@@ -191,6 +191,7 @@ namespace EntityFramework.Utilities
 
                 var spec = new UpdateSpecification<TEntity>();
                 updateSpecification(spec);
+                provider.Transaction = transaction;
                 provider.UpdateItems(items, tableMapping.Schema, tableMapping.TableName, properties, connectionToUse, batchSize, spec);
             }
             else
@@ -263,7 +264,9 @@ namespace EntityFramework.Utilities
                     .Select(p => new SqlParameter { Value = p.Value, ParameterName = p.Name })
                     .ToArray<object>();
 
-                return context.ExecuteStoreCommand(update, parameters);
+                var filasAfectadas=context.ExecuteStoreCommand(update, parameters); //modificado B&A
+
+                return filasAfectadas;
             }
             else
             {

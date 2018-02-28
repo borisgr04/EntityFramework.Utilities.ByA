@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data.Common;
+using System.Data.Entity.Infrastructure;
 using System.Data.SqlClient;
 using System.Linq;
 using System.Text;
@@ -93,16 +94,33 @@ namespace EntityFramework.Utilities
             }
         }
 
-
         public void UpdateItems<T>(IEnumerable<T> items, string schema, string tableName, IList<ColumnMapping> properties, DbConnection storeConnection, int? batchSize, UpdateSpecification<T> updateSpecification)
         {
-            var tempTableName = "temp_" + tableName + "_" + DateTime.Now.Ticks;
-            var columnsToUpdate = updateSpecification.Properties.Select(p => p.GetPropertyName()).ToDictionary(x => x);
-            var filtered = properties.Where(p => columnsToUpdate.ContainsKey(p.NameOnObject) || p.IsPrimaryKey).ToList();
-            var columns = filtered.Select(c => "[" + c.NameInDatabase + "] " + c.DataType);
-            var pkConstraint = string.Join(", ", properties.Where(p => p.IsPrimaryKey).Select(c => "[" + c.NameInDatabase + "]"));
+            var ColumnaControlConcurrencia = "RowVersion";
 
+            var tempTableName = "temp_" + tableName + "_" + DateTime.Now.Ticks;
+
+            var columnsToUpdate = updateSpecification.Properties.Select(p => p.GetPropertyName()).ToDictionary(x => x);
+            List<ColumnMapping> filtered;
+            var tieneControlConcurrencia = typeof(T).GetProperty("RowVersion") != null;
+            if (tieneControlConcurrencia)
+            {
+                filtered = properties.Where(p => columnsToUpdate.ContainsKey(p.NameOnObject) || p.IsPrimaryKey || p.NameOnObject== ColumnaControlConcurrencia).ToList();
+            }
+            else 
+            {
+                filtered = properties.Where(p => columnsToUpdate.ContainsKey(p.NameOnObject) || p.IsPrimaryKey).ToList();
+            }
+            
+            var columns = filtered.Select(c => "[" + c.NameInDatabase + "] " + c.DataType);
+
+            var pkConstraint = string.Join(", ", properties.Where(p => p.IsPrimaryKey).Select(c => "[" + c.NameInDatabase + "]"));
+            
             var str = string.Format("CREATE TABLE {0}.[{1}]({2}, PRIMARY KEY ({3}))", schema, tempTableName, string.Join(", ", columns), pkConstraint);
+            if (tieneControlConcurrencia)
+            {
+                str = str.Replace("rowversion", "binary(8)");
+            }
 
             var con = storeConnection as SqlConnection;
             if (con.State != System.Data.ConnectionState.Open)
@@ -110,9 +128,16 @@ namespace EntityFramework.Utilities
                 con.Open();
             }
 
-            var setters = string.Join(",", filtered.Where(c => !c.IsPrimaryKey).Select(c => "[" + c.NameInDatabase + "] = TEMP.[" + c.NameInDatabase + "]"));
+            var setters = string.Join(",", filtered.Where(c => !c.IsPrimaryKey && c.NameOnObject!=ColumnaControlConcurrencia).Select(c => "[" + c.NameInDatabase + "] = TEMP.[" + c.NameInDatabase + "]"));
             var pks = properties.Where(p => p.IsPrimaryKey).Select(x => "ORIG.[" + x.NameInDatabase + "] = TEMP.[" + x.NameInDatabase + "]");
             var filter = string.Join(" and ", pks);
+
+            var item = items.First();
+            
+            if (tieneControlConcurrencia) {
+                filter += " and ORIG.[RowVersion] = cast(TEMP.[RowVersion] AS BINARY(8))";
+            }
+                        
             var mergeCommand = string.Format(@"UPDATE [{0}]
                 SET
                     {3}
@@ -123,34 +148,30 @@ namespace EntityFramework.Utilities
                 ON 
                     {2}", tableName, tempTableName, filter, setters);
 
-
-            if (Transaction != null)
-            {
-                using (var createCommand = new SqlCommand(str, con, Transaction))
-                using (var mCommand = new SqlCommand(mergeCommand, con, Transaction))
-                using (var dCommand = new SqlCommand(string.Format("DROP table {0}.[{1}]", schema, tempTableName), con, Transaction))
+            
+                using (var createCommand = Create(str, con))
+                using (var mCommand = Create(mergeCommand, con))
+                using (var dCommand = Create(string.Format("DROP table {0}.[{1}]", schema, tempTableName), con))
                 {
+                    var registrosModificar = items.Count();
                     createCommand.ExecuteNonQuery();
                     InsertItems(items, schema, tempTableName, filtered, storeConnection, batchSize);
-                    mCommand.ExecuteNonQuery();
-                    dCommand.ExecuteNonQuery();
+                    var registrosModificados = mCommand.ExecuteNonQuery();
+                    if (registrosModificar != registrosModificados)
+                        throw new DbUpdateConcurrencyException(@"Uno de los registros que intentó actualizar fue modificado por otro usuario, se canceló la operación de actualización para prevenir inconsistencias. Entidad:" + tableName);
                 }
-            }
-            else {
-                using (var createCommand = new SqlCommand(str, con))
-                using (var mCommand = new SqlCommand(mergeCommand, con))
-                using (var dCommand = new SqlCommand(string.Format("DROP table {0}.[{1}]", schema, tempTableName), con))
-                {
-                    createCommand.ExecuteNonQuery();
-                    InsertItems(items, schema, tempTableName, filtered, storeConnection, batchSize);
-                    mCommand.ExecuteNonQuery();
-                    dCommand.ExecuteNonQuery();
-                }
-
-            }
 
         }
 
+        private SqlCommand Create(string str, SqlConnection con) {
+            if (Transaction != null)
+            {
+                return new SqlCommand(str, con, Transaction);
+            }
+            else {
+                return new SqlCommand(str, con);
+            }
+        }
 
         public bool CanHandle(System.Data.Common.DbConnection storeConnection)
         {

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 
@@ -12,6 +13,8 @@ namespace Tests.FakeDomain.Models
         public string ShortTitle { get; set; }
         public DateTime Created { get; set; }
         public int Reads { get; set; }
+        [Timestamp]
+        public byte[] RowVersion { get; set; }
         public AuthorInfo Author { get; set; }
         public ICollection<Comment> Comments { get; set; }
 
